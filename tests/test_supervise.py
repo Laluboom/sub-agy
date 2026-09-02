@@ -17,7 +17,7 @@ from sub_agy.worktree import git_head
 
 def test_supervise_error_exit(git_repo: Path, fake_agy: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-err"
@@ -69,7 +69,7 @@ def test_supervise_timeout_retry(
     Final state should be error with attempts=2.
     """
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\nmax_retries = 1\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\nmax_retries = 1\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-to-retry"
@@ -118,7 +118,7 @@ def test_supervise_argv_unconditional_skip_permissions(
     git_repo: Path, fake_agy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\ndefault_timeout = "5m"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\ndefault_timeout = "5m"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-argv-check"
@@ -176,7 +176,7 @@ def test_supervise_legacy_meta_with_auto_approve(
 ) -> None:
     config_path = git_repo / "test-config.toml"
     config_path.write_text(
-        f'agy_bin = "{fake_agy}"\nauto_approve = true\nsandbox = false\n',
+        f'agy_bin = "{fake_agy.as_posix()}"\nauto_approve = true\nsandbox = false\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))

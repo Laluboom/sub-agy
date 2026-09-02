@@ -19,9 +19,11 @@ def test_transcript_fallback(
     git_repo: Path, fake_agy: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Isolate HOME so we can fake the brain directory.
+    # Windows Path.home() reads USERPROFILE, not HOME — set both.
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     brain = home / ".gemini" / "antigravity-cli" / "brain" / "uuid-1" / ".system_generated" / "logs"
     brain.mkdir(parents=True)
     transcript = brain / "transcript.jsonl"
@@ -35,7 +37,7 @@ def test_transcript_fallback(
     time.sleep(0.1)
 
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-fallback"
@@ -81,6 +83,7 @@ def test_transcript_fallback_content_blocks(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     brain = home / ".gemini" / "antigravity-cli" / "brain" / "uuid-blocks" / ".system_generated" / "logs"
     brain.mkdir(parents=True)
     transcript = brain / "transcript.jsonl"
@@ -104,7 +107,7 @@ def test_transcript_fallback_content_blocks(
     time.sleep(0.1)
 
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-blocks"

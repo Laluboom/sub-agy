@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import Config, agy_bin_path, load_config, parse_timeout
+from .config import Config, agy_command, load_config, parse_timeout
 from .jobs import (
     events_path,
     job_dir,
@@ -23,6 +23,7 @@ from .jobs import (
     update_meta,
     write_meta,
 )
+from .procs import kill_tree, terminate_tree
 from .queue import QueueTimeout, acquire_slot
 from .worktree import diff_stat
 
@@ -165,7 +166,7 @@ def _run_agy_once(
     # We rely on subprocess.Popen(..., cwd=worktree_or_cwd) instead, which has
     # the same effect for a non-interactive agy process.
     argv = [
-        agy_bin_path(config),
+        *agy_command(config),
         "-p",
         prompt,
         "--output-format",
@@ -234,10 +235,9 @@ def _run_agy_once(
     try:
         exit_code = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            proc.kill()
+        # SIGKILL does not exist on Windows and killpg never did; kill_tree
+        # picks the platform's forced stop and takes agy's children with it.
+        kill_tree(proc.pid)
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -281,10 +281,7 @@ def supervise_round(job_id: str, round_number: int, project: Path | None = None)
         nonlocal cancelled
         cancelled = True
         if proc is not None and proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.terminate()
+            terminate_tree(proc.pid)
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)

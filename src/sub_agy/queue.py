@@ -8,14 +8,19 @@ under an flock so two supervisors cannot claim the same slot.
 
 from __future__ import annotations
 
-import fcntl
+import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import IO, Callable, Iterator
 
 from .jobs import list_jobs, project_bridge_dir, read_meta, write_meta
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class QueueTimeout(RuntimeError):
@@ -28,15 +33,41 @@ def lock_path(project: Path) -> Path:
     return path
 
 
+def _acquire(fh: IO[str]) -> None:
+    """Take the exclusive advisory lock, waiting as long as it takes."""
+    if os.name == "nt":
+        # Lock one byte at offset 0, mirroring the single-flock-per-file model.
+        # Windows drops the range as soon as the handle closes, so a crashed
+        # supervisor cannot leave a stale lock behind.
+        fh.seek(0)
+        # LK_LOCK blocks for ~1s per attempt and only raises OSError after ten,
+        # so loop to get the indefinite wait flock provides.
+        while True:
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+
+def _release(fh: IO[str]) -> None:
+    if os.name == "nt":
+        fh.seek(0)  # the range to unlock is relative to the file position
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 @contextmanager
 def queue_lock(project: Path) -> Iterator[None]:
     """Serialize slot accounting across supervisor processes."""
     with lock_path(project).open("a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        _acquire(fh)
         try:
             yield
         finally:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            _release(fh)
 
 
 def _fifo_key(meta: dict) -> tuple[str, str]:

@@ -100,8 +100,10 @@ sys.exit(exit_code)
 def config_env(tmp_path: Path, fake_agy: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Write a config file pointing to fake_agy and set SUB_AGY_CONFIG env var."""
     config_path = tmp_path / "config.toml"
+    # POSIX slashes keep the TOML basic string valid on Windows, where
+    # backslashes would be parsed as escape characters.
     config_path.write_text(
-        f'agy_bin = "{fake_agy}"\ndefault_timeout = "5m"\n',
+        f'agy_bin = "{fake_agy.as_posix()}"\ndefault_timeout = "5m"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
@@ -113,7 +115,9 @@ def run_bridge(git_repo: Path, config_env: Path) -> callable:
     """Helper to run sub-agy CLI in the tmp git repo."""
 
     def _run(*args: str, env: dict | None = None, check: bool = True) -> subprocess.CompletedProcess:
-        env = {**(env or {}), "SUB_AGY_CONFIG": str(config_env)}
+        # Inherit os.environ: a bare env on Windows lacks USERPROFILE/SystemRoot,
+        # which breaks Path.home() and process creation in the child CLI.
+        env = {**os.environ, **(env or {}), "SUB_AGY_CONFIG": str(config_env)}
         return subprocess.run(
             [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), *args],
             cwd=str(git_repo),

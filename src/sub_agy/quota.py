@@ -7,7 +7,7 @@ import re
 import subprocess
 from collections import OrderedDict
 
-from .config import Config, agy_bin_path
+from .config import Config, agy_command
 
 _REFRESH_RE = re.compile(r"refresh in (.+?)\.?$", re.IGNORECASE)
 
@@ -211,10 +211,8 @@ def fetch_quota(config: Config, timeout: float = 75.0) -> dict:
         FileNotFoundError: agy binary not found (maps to exit 127).
         RuntimeError/ValueError: other failures (maps to exit 1).
     """
-    agy_path = agy_bin_path(config)
-
     argv = [
-        agy_path,
+        *agy_command(config),
         "-p",
         "/usage",
         "--output-format",
@@ -232,7 +230,7 @@ def fetch_quota(config: Config, timeout: float = 75.0) -> dict:
             timeout=timeout,
         )
     except FileNotFoundError as exc:
-        raise FileNotFoundError(f"agy not found: {agy_path}") from exc
+        raise FileNotFoundError(f"agy not found: {argv[0]}") from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"agy quota query timed out after {timeout}s") from exc
 

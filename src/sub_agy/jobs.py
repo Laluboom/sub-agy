@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .procs import pid_alive
 from .schema import EXIT_CODES, META_STATES
 
 
@@ -111,11 +112,9 @@ def update_meta(project: Path, job_id: str, **kwargs) -> dict:
 def _is_running(pid: int | None) -> bool:
     if pid is None:
         return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
+    # A probe that cannot fail (os.kill(pid, 0) on Windows) would keep a dead
+    # supervisor's job in `running` and permanently hold its run slot.
+    return pid_alive(pid)
 
 
 def transition(

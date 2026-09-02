@@ -83,8 +83,9 @@ def test_watch_done_job(tmp_project: Path) -> None:
     assert item["contract_ok"] is True
     assert item["tests_passed"] is True
     assert item["diff_stat"] == "1 file changed"
-    assert item["result_path"].endswith(f"jobs/{job_id}/result.json")
-    assert item["events_path"].endswith(f"jobs/{job_id}/events.ndjson")
+    # Path separators differ by platform; normalize before the suffix check.
+    assert item["result_path"].replace("\\", "/").endswith(f"jobs/{job_id}/result.json")
+    assert item["events_path"].replace("\\", "/").endswith(f"jobs/{job_id}/events.ndjson")
     assert item["elapsed_seconds"] is not None
     assert item["elapsed_seconds"] >= 0
 

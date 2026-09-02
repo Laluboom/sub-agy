@@ -34,7 +34,7 @@ def test_error_round_writes_result_json(
 ) -> None:
     """§18.1.c: error state also writes result.json with round matching meta.round."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-error-result"
@@ -83,7 +83,7 @@ def test_error_round_writes_result_json(
 def test_stale_result_detection(git_repo: Path, fake_agy: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§18.1.c: result.round != meta.round -> documents stale result detection."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-stale"
@@ -192,7 +192,7 @@ def test_cancel_does_not_overwrite_terminal(
 ) -> None:
     """§18.1.g: cancel on a terminal job leaves state unchanged and reports actual state."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-done-then-cancel"
@@ -249,7 +249,7 @@ def test_feedback_clears_residual_fields(
 ) -> None:
     """§18.1.l: feedback resets error/agy_status/exit_code/pid_agy/recovered_from_transcript/finished_at."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-feedback-clear"
@@ -323,13 +323,15 @@ def test_transcript_recovery_rejects_multiple_candidates(
 ) -> None:
     """§18.1.i: transcript recovery with multiple candidates -> no recovery, state=error."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     # Point HOME to tmp so we can control brain dir
+    # (Windows Path.home() reads USERPROFILE, not HOME — set both)
     fake_home = tmp_path / "fake_home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
 
     job_id = "j-transcript-multi"
     jdir = job_dir(git_repo, job_id)
@@ -391,7 +393,7 @@ def test_pending_and_harvested_lifecycle(
 ) -> None:
     """§18.2: pending lists unharvested done/error jobs; result marks harvested."""
     config_path = git_repo / "test-config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
 
     job_id = "j-pending-test"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,3 +91,16 @@ def agy_bin_path(config: Config) -> str:
         if candidate.exists():
             return str(candidate)
     return name
+
+
+def agy_command(config: Config) -> list[str]:
+    """Argv prefix that launches agy on any platform.
+
+    A ``.py`` path cannot be exec'd directly on Windows (CreateProcess only
+    loads executables), so run it through the current interpreter.  Real agy
+    binaries take the plain path unchanged.
+    """
+    path = agy_bin_path(config)
+    if path.lower().endswith(".py"):
+        return [sys.executable, path]
+    return [path]

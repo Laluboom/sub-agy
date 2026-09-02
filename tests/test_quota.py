@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,10 +22,11 @@ def _make_quota_script(tmp_path: Path, body: str) -> Path:
 
 
 def _run_quota(tmp_path: Path, *args: str, agy_bin: Path | None = None) -> subprocess.CompletedProcess:
-    env = {}
+    env = dict(os.environ)
     if agy_bin is not None:
         config_path = tmp_path / "config.toml"
-        config_path.write_text(f'agy_bin = "{agy_bin}"\n', encoding="utf-8")
+        # POSIX slashes keep the TOML string valid for Windows paths.
+        config_path.write_text(f'agy_bin = "{agy_bin.as_posix()}"\n', encoding="utf-8")
         env["SUB_AGY_CONFIG"] = str(config_path)
     return subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "quota", *args],
@@ -168,7 +170,7 @@ def test_quota_failure(failing_agy: Path, tmp_path: Path) -> None:
 def test_quota_missing_agy(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text('agy_bin = "/no/such/agy"\n', encoding="utf-8")
-    env = {"SUB_AGY_CONFIG": str(config_path)}
+    env = {**os.environ, "SUB_AGY_CONFIG": str(config_path)}
     result = subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "quota"],
         cwd=str(tmp_path),

@@ -180,7 +180,7 @@ def test_doctor_hints_empty_when_no_issues(tmp_path: Path, monkeypatch: pytest.M
     """Test doctor with no issues returns empty hints."""
     # Create a config pointing to fake agy that works
     config_path = tmp_path / "config.toml"
-    config_path.write_text(f'agy_bin = "{fake_agy}"\ndefault_timeout = "5m"\n', encoding="utf-8")
+    config_path.write_text(f'agy_bin = "{fake_agy.as_posix()}"\ndefault_timeout = "5m"\n', encoding="utf-8")
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
     monkeypatch.setenv("FAKE_AGY_STATUS", "SUCCESS")
     monkeypatch.setenv("FAKE_AGY_RESPONSE", "agy 1.2.0")

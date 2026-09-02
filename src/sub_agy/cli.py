@@ -7,13 +7,12 @@ import dataclasses
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import Config, agy_bin_path, load_config, parse_timeout
+from .config import Config, agy_bin_path, agy_command, load_config, parse_timeout
 from .jobs import (
     elapsed_seconds,
     generate_job_id,
@@ -31,6 +30,7 @@ from .jobs import (
     write_meta,
 )
 from .plan import Plan, assemble_prompt, parse_plan, write_plan_files
+from .procs import pid_alive, spawn_detached, terminate_tree
 from .queue import queue_forecast, queue_lock, queue_position
 from .quota import fetch_quota, format_oneline
 from .schema import EXIT_CODES, RESULT_SCHEMA, extract_tokens, fmt_elapsed, fmt_tokens
@@ -186,13 +186,7 @@ def cmd_run(args) -> None:
         "1",
     ]
 
-    proc = subprocess.Popen(
-        supervisor_argv,
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_fh,
-        start_new_session=True,
-        cwd=str(project),
-    )
+    proc = spawn_detached(supervisor_argv, stderr_fh, cwd=str(project))
     stderr_fh.close()
 
     # Record the supervisor pid under the queue lock so we cannot clobber the
@@ -426,13 +420,7 @@ def cmd_feedback(args) -> None:
         "--round",
         str(round_number),
     ]
-    proc = subprocess.Popen(
-        supervisor_argv,
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_fh,
-        start_new_session=True,
-        cwd=str(project),
-    )
+    proc = spawn_detached(supervisor_argv, stderr_fh, cwd=str(project))
     stderr_fh.close()
     with queue_lock(project):
         meta = update_meta(project, args.id, pid_supervisor=proc.pid)
@@ -468,22 +456,10 @@ def cmd_cancel(args) -> None:
     supervisor_pid = meta.get("pid_supervisor")
     agy_pid = meta.get("pid_agy")
 
-    killed = False
-    if supervisor_pid and _pid_alive(supervisor_pid):
-        os.kill(supervisor_pid, signal.SIGTERM)
-        killed = True
-    elif agy_pid and _pid_alive(agy_pid):
-        try:
-            os.killpg(os.getpgid(agy_pid), signal.SIGTERM)
-            killed = True
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                os.kill(agy_pid, signal.SIGTERM)
-                killed = True
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-
-    # §18.1.g: Use transition() to atomically change only non-terminal jobs
+    # §18.1.g: transition first — only a job still in queued/running may be
+    # cancelled, and only then is killing the recorded pids justified.  The
+    # pids stay in meta after a job finishes, so killing before checking state
+    # could hit an innocent process that reused the pid.
     with queue_lock(project):
         updated = transition(
             project,
@@ -504,15 +480,16 @@ def cmd_cancel(args) -> None:
         else:
             state = "cancelled"
 
+    killed = False
+    if state == "cancelled":
+        if supervisor_pid and pid_alive(supervisor_pid):
+            # The supervisor is a session leader, so stopping its tree takes the agy
+            # round with it rather than orphaning it on a cancelled job.
+            killed = terminate_tree(supervisor_pid)
+        elif agy_pid and pid_alive(agy_pid):
+            killed = terminate_tree(agy_pid)
+
     print(_fmt_json({"job_id": args.id, "state": state}, args.pretty))
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
 
 
 def cmd_list(args) -> None:
@@ -569,7 +546,7 @@ def cmd_doctor(args) -> None:
     agy_version: str | None = None
     try:
         result = subprocess.run(
-            [agy_path, "--version"],
+            [*agy_command(config), "--version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -592,6 +569,10 @@ def cmd_doctor(args) -> None:
                 issues.append("could not parse agy version")
     except FileNotFoundError:
         issues.append("agy not found on PATH")
+    # Windows raises WinError 193 (an OSError, not FileNotFoundError) when the
+    # resolved path is not an executable image at all.
+    except OSError as exc:
+        issues.append(f"agy failed to start: {exc}")
     except subprocess.TimeoutExpired:
         issues.append("agy --version timed out")
 
