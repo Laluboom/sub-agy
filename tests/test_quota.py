@@ -32,7 +32,8 @@ def _run_quota(tmp_path: Path, *args: str, agy_bin: Path | None = None) -> subpr
         [sys.executable, "-m", "sub_agy.cli", "quota", *args],
         cwd=str(tmp_path),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         check=False,
     )
@@ -175,7 +176,8 @@ def test_quota_missing_agy(tmp_path: Path) -> None:
         [sys.executable, "-m", "sub_agy.cli", "quota"],
         cwd=str(tmp_path),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         check=False,
     )

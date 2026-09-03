@@ -30,7 +30,7 @@ from .jobs import (
     write_meta,
 )
 from .plan import Plan, assemble_prompt, parse_plan, write_plan_files
-from .procs import pid_alive, spawn_detached, terminate_tree
+from .procs import configure_stdio, pid_alive, spawn_detached, terminate_tree
 from .queue import queue_forecast, queue_lock, queue_position
 from .quota import fetch_quota, format_oneline
 from .schema import EXIT_CODES, RESULT_SCHEMA, extract_tokens, fmt_elapsed, fmt_tokens
@@ -549,7 +549,8 @@ def cmd_doctor(args) -> None:
             [*agy_command(config), "--version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -581,12 +582,16 @@ def cmd_doctor(args) -> None:
             ["git", "--version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         git_version = git_result.stdout.strip() if git_result.returncode == 0 else None
     except FileNotFoundError:
         issues.append("git not found")
+        git_version = None
+    except OSError as exc:
+        issues.append(f"git failed to start: {exc}")
         git_version = None
 
     py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -973,6 +978,7 @@ def _normalize_argv(argv: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(argv if argv is not None else sys.argv[1:]))
     try:

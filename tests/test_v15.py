@@ -146,7 +146,8 @@ def test_list_pretty_with_queued_no_crash(git_repo: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), "list", "--pretty"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0, f"list --pretty crashed: {result.stderr}"
     assert "j-queued-pretty" in result.stdout
@@ -232,7 +233,8 @@ def test_cancel_does_not_overwrite_terminal(
     result = subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), "cancel", job_id],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0
     output = json.loads(result.stdout)
@@ -301,7 +303,8 @@ def test_feedback_clears_residual_fields(
             "fix this",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0, f"feedback failed: {result.stdout}\n{result.stderr}"
 
@@ -426,7 +429,8 @@ def test_pending_and_harvested_lifecycle(
     result = subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), "pending"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0, f"pending failed: {result.stderr}"
     pending = json.loads(result.stdout)
@@ -442,7 +446,8 @@ def test_pending_and_harvested_lifecycle(
     result = subprocess.run(
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), "result", job_id],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 0, f"result failed: {result.stderr}"
 
@@ -677,7 +682,8 @@ def test_pending_under_aggregates_projects(tmp_path: Path, monkeypatch: pytest.M
         [sys.executable, "-m", "sub_agy.cli", "pending", "--under", str(parent)],
         cwd=parent,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
 
@@ -697,6 +703,7 @@ def test_pending_under_exclusive_with_cwd(git_repo: Path) -> None:
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), "pending", "--under", "/tmp"],
         cwd=git_repo,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert result.returncode == 64  # usage error

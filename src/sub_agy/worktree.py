@@ -22,7 +22,8 @@ def git_head(cwd: Path) -> str | None:
         ["git", "-C", str(cwd), "rev-parse", "HEAD"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if result.returncode != 0:
         return None
@@ -35,7 +36,8 @@ def ensure_exclude(cwd: Path, project: Path) -> None:
         ["git", "-C", str(cwd), "rev-parse", "--git-dir"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if git_dir_raw.returncode != 0:
         return
@@ -65,7 +67,8 @@ def add_worktree(
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return worktree_dir, branch
 
@@ -93,7 +96,8 @@ def diff_stat(cwd: Path, base_sha: str) -> tuple[str, list[str]]:
         ["git", "-C", str(cwd), "diff", "--stat", f"{base_sha}..HEAD"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     stat_text = stat_result.stdout.strip()
 
@@ -101,7 +105,8 @@ def diff_stat(cwd: Path, base_sha: str) -> tuple[str, list[str]]:
         ["git", "-C", str(cwd), "diff", "--name-only", f"{base_sha}..HEAD"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     names = [line.strip() for line in names_result.stdout.splitlines() if line.strip()]
     return stat_text, names

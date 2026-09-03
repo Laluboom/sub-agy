@@ -23,7 +23,7 @@ from .jobs import (
     update_meta,
     write_meta,
 )
-from .procs import kill_tree, terminate_tree
+from .procs import child_group_kwargs, kill_tree, terminate_tree
 from .queue import QueueTimeout, acquire_slot
 from .worktree import diff_stat
 
@@ -197,10 +197,11 @@ def _run_agy_once(
         argv,
         stdout=subprocess.PIPE,
         stderr=stderr_fh,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
-        start_new_session=True,
         cwd=str(worktree_or_cwd),
+        **child_group_kwargs(),
     )
 
     # Immediately record agy process ownership (§18.1.d)
@@ -210,9 +211,12 @@ def _run_agy_once(
     events_lock = threading.Lock()
 
     def _reader() -> None:
-        if proc.stdout is None:
-            return
+        # Nothing awaits this thread's outcome, so an exception escaping it
+        # would leave `events` empty and the round would report that agy never
+        # produced a result; the stderr log is the only channel out.
         try:
+            if proc.stdout is None:
+                return
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -226,6 +230,9 @@ def _run_agy_once(
                 with events_lock:
                     events.append(event)
                 _write_event(project, meta["id"], event)
+        except Exception as exc:
+            stderr_fh.write(f"[reader error] {exc!r}\n")
+            stderr_fh.flush()
         finally:
             stderr_fh.close()
 
@@ -276,6 +283,7 @@ def supervise_round(job_id: str, round_number: int, project: Path | None = None)
     )
 
     cancelled = False
+    proc: subprocess.Popen | None = None
 
     def _handle_signal(signum: int, frame: object) -> None:
         nonlocal cancelled
@@ -285,8 +293,6 @@ def supervise_round(job_id: str, round_number: int, project: Path | None = None)
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
-
-    proc: subprocess.Popen | None = None
 
     # Claim ownership before queueing so `status`/`list` can reconcile a
     # supervisor that dies while still waiting for a run slot.

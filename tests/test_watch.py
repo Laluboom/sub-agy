@@ -27,7 +27,8 @@ def _run_watch(project: Path, *args: str) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(project), "watch", *args],
         cwd=str(project),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

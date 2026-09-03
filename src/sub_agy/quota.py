@@ -226,7 +226,8 @@ def fetch_quota(config: Config, timeout: float = 75.0) -> dict:
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except FileNotFoundError as exc:

@@ -122,7 +122,8 @@ def run_bridge(git_repo: Path, config_env: Path) -> callable:
             [sys.executable, "-m", "sub_agy.cli", "--cwd", str(git_repo), *args],
             cwd=str(git_repo),
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             check=check,
         )

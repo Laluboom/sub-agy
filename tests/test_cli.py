@@ -15,7 +15,8 @@ def _run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess:
         [sys.executable, "-m", "sub_agy.cli", "--cwd", str(cwd), *args],
         cwd=str(cwd),
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -82,23 +83,29 @@ def load_config(path: Path | None = None) -> Config:
 
 
 def agy_bin_path(config: Config) -> str:
-    """Resolve configured agy binary; if bare name, require it on PATH."""
+    """Resolve the configured agy binary; a bare name is looked up on PATH.
+
+    The lookup goes through ``shutil.which`` because it honours PATHEXT: the
+    file on disk under Windows is ``agy.exe`` or, for an npm install, ``agy.cmd``
+    -- neither of which a probe for a bare ``agy`` finds, and the ``.cmd`` is not
+    something Popen could start from a bare name anyway, since CreateProcess
+    appends only ``.exe``.  A name that resolves to nothing comes back unchanged,
+    leaving callers to report it as missing.
+    """
     name = config.agy_bin
     if os.path.isabs(name) or "/" in name or "\\" in name:
         return name
-    for directory in os.environ.get("PATH", "").split(os.pathsep):
-        candidate = Path(directory) / name
-        if candidate.exists():
-            return str(candidate)
-    return name
+    return shutil.which(name) or name
 
 
 def agy_command(config: Config) -> list[str]:
     """Argv prefix that launches agy on any platform.
 
-    A ``.py`` path cannot be exec'd directly on Windows (CreateProcess only
-    loads executables), so run it through the current interpreter.  Real agy
-    binaries take the plain path unchanged.
+    A ``.py`` path cannot be exec'd directly on Windows, as CreateProcess has no
+    notion of an interpreter to hand it to, so run it through the current one.
+    Real agy binaries take the plain path unchanged, ``.cmd`` and ``.bat`` shims
+    included: CreateProcess recognises those extensions and delegates them to
+    cmd.exe.
     """
     path = agy_bin_path(config)
     if path.lower().endswith(".py"):

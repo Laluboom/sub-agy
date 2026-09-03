@@ -1,12 +1,19 @@
 """Process-lifecycle primitives that POSIX shorthand cannot express on Windows.
 
-Two things sub-agy needs from the OS are platform-specific:
+Four things sub-agy needs from the OS are platform-specific:
 
 * *Is this pid still running?*  ``os.kill(pid, 0)`` is the usual probe, but on
   Windows it returns without raising even when the process is gone, so a dead
   supervisor would look alive forever and never release its run slot.
 * *Stop this job.*  ``os.killpg``/``os.getpgid`` do not exist on Windows and
   ``signal.SIGKILL`` is not defined there either.
+* *Write non-ASCII text.*  Windows resolves stdio to the locale codepage rather
+  than UTF-8 -- cp936 on a Chinese install -- so a Chinese hint or a ``•``
+  raises UnicodeEncodeError, and the JSON this CLI emits with
+  ``ensure_ascii=False`` reaches its plugin callers as bytes they cannot decode.
+* *Put a child in its own process group.*  ``start_new_session`` is accepted and
+  then ignored on Windows, so a child spawned with it silently stays in the
+  caller's group.
 
 Call sites go through this module instead of touching those directly, so the
 platform branch lives in exactly one place.
@@ -17,6 +24,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from typing import IO
 
 if os.name == "nt":
@@ -35,6 +43,26 @@ if os.name == "nt":
     _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
     _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
     _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+
+def configure_stdio() -> None:
+    """Pin this process's stdout and stderr to UTF-8, replacing what will not map.
+
+    Applied on every platform, not just Windows: it is a no-op where stdio is
+    already UTF-8, and one code path means the bytes a plugin caller has to
+    decode do not depend on which OS ran the CLI.  Streams that something else
+    installed -- pytest's capture, an embedder's pipe -- need not be
+    ``TextIOWrapper`` at all and then offer no ``reconfigure``, and losing the
+    encoding is never worth failing a run over, so both cases are skipped.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 def pid_alive(pid: int) -> bool:
@@ -107,10 +135,10 @@ def _kill_tree(pid: int, force: bool) -> bool:
 def spawn_detached(argv: list[str], stderr_fh: IO[str], cwd: str) -> subprocess.Popen:
     """Spawn a supervisor that keeps running after the caller exits.
 
-    POSIX gets a new session via ``start_new_session``.  Windows needs
-    ``DETACHED_PROCESS`` -- ``start_new_session`` there only maps to
-    CREATE_NEW_PROCESS_GROUP, which leaves the child attached to the caller's
-    console, so closing the terminal would take the supervisor down with it.
+    POSIX gets a new session via ``start_new_session``.  Windows ignores that
+    argument outright, and CREATE_NEW_PROCESS_GROUP alone would still leave the
+    child attached to the caller's console, so closing the terminal would take
+    the supervisor down with it; only ``DETACHED_PROCESS`` cuts that tie.
     """
     kwargs: dict = {}
     if os.name == "nt":
@@ -127,3 +155,17 @@ def spawn_detached(argv: list[str], stderr_fh: IO[str], cwd: str) -> subprocess.
         cwd=cwd,
         **kwargs,
     )
+
+
+def child_group_kwargs() -> dict:
+    """Popen kwargs that give a child its own process group.
+
+    On Windows ``start_new_session`` is accepted and then ignored, leaving the
+    child in the caller's group where a console Ctrl-C would reach it;
+    CREATE_NEW_PROCESS_GROUP is the flag that actually separates it.  That flag
+    stays unpaired here: adding DETACHED_PROCESS is spawn_detached's job, and a
+    child whose stdout the parent still reads must keep its handles.
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
