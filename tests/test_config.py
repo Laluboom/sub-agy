@@ -61,3 +61,85 @@ def test_load_config_ignores_legacy_keys(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
     config = load_config()
     assert config.default_model == "gemini-2.5"
+
+
+def test_load_config_accounts_array(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "accounts-array.toml"
+    config_path.write_text(
+        """
+low_quota_threshold = 25.0
+
+[[accounts]]
+name = "main"
+agy_bin = "/path/to/agy"
+brain_dir = "/path/to/brain"
+low_quota_threshold = 30.0
+
+[[accounts]]
+name = "rainy"
+agy_bin = "/path/to/agy-rainy"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
+    config = load_config()
+    assert config.low_quota_threshold == 25.0
+    assert len(config.accounts) == 2
+
+    acc1 = config.get_account("main")
+    assert acc1 is not None
+    assert acc1.name == "main"
+    assert acc1.agy_bin == "/path/to/agy"
+    assert acc1.brain_dir == "/path/to/brain"
+    assert acc1.low_quota_threshold == 30.0
+
+    acc2 = config.get_account("rainy")
+    assert acc2 is not None
+    assert acc2.name == "rainy"
+    assert acc2.agy_bin == "/path/to/agy-rainy"
+    assert acc2.brain_dir == ""
+    assert acc2.low_quota_threshold is None
+
+    assert config.get_account("unknown") is None
+
+
+def test_load_config_accounts_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "accounts-table.toml"
+    config_path.write_text(
+        """
+low_quota_threshold = "15%"
+
+[accounts.first]
+agy_bin = "agy-1"
+brain_dir = "~/.brain1"
+
+[accounts.second]
+agy_bin = "agy-2"
+low_quota_threshold = "10%"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
+    config = load_config()
+    assert config.low_quota_threshold == 15.0
+    assert len(config.accounts) == 2
+
+    first = config.get_account("first")
+    assert first is not None
+    assert first.agy_bin == "agy-1"
+
+    second = config.get_account("second")
+    assert second is not None
+    assert second.low_quota_threshold == 10.0
+
+
+def test_default_account_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "single.toml"
+    config_path.write_text('agy_bin = "/custom/agy"\n', encoding="utf-8")
+    monkeypatch.setenv("SUB_AGY_CONFIG", str(config_path))
+    config = load_config()
+    assert len(config.accounts) == 0
+    default_acc = config.default_account()
+    assert default_acc.name == "default"
+    assert default_acc.agy_bin == "/custom/agy"
+    assert "antigravity-cli" in str(default_acc.resolved_brain_dir())

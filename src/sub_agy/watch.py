@@ -32,6 +32,7 @@ def _build_job_summary(project: Path, job_id: str, meta: dict) -> dict:
 
     return {
         "job_id": meta.get("id", job_id),
+        "account": meta.get("account") or result.get("account") or "default",
         "state": meta.get("state"),
         "round": result.get("round", meta.get("round")),
         "agy_status": result.get("agy_status", meta.get("agy_status")),
@@ -57,7 +58,7 @@ def _compute_exit_code(summaries: list[dict]) -> int:
 def _print_summaries(summaries: list[dict], pretty: bool) -> None:
     if pretty:
         print(
-            f"{'job_id':<30} {'state':<12} {'round':>5} "
+            f"{'job_id':<30} {'account':<12} {'state':<12} {'round':>5} "
             f"{'elapsed':>10} {'tokens':>10} {'contract_ok':>10} {'summary'}"
         )
         for s in summaries:
@@ -68,7 +69,7 @@ def _print_summaries(summaries: list[dict], pretty: bool) -> None:
             contract = "true" if s.get("contract_ok") else "false"
             summary = (s.get("summary") or "")[:60]
             print(
-                f"{s['job_id']:<30} {s['state']:<12} {s.get('round', 1):>5} "
+                f"{s['job_id']:<30} {s.get('account', 'default'):<12} {s['state']:<12} {s.get('round', 1):>5} "
                 f"{elapsed_str:>10} {tokens_str:>10} {contract:>10} {summary}"
             )
     else:
