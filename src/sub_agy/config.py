@@ -26,7 +26,7 @@ class AccountConfig:
         return Path.home() / ".gemini" / "antigravity-cli" / "brain"
 
     def resolved_agy_bin(self) -> str:
-        name = self.agy_bin
+        name = os.path.expanduser(self.agy_bin)
         if os.path.isabs(name) or "/" in name or "\\" in name:
             return name
         return shutil.which(name) or name
@@ -191,6 +191,7 @@ def agy_bin_path(config: Config | AccountConfig | str) -> str:
         name = config.agy_bin
     else:
         name = config.agy_bin
+    name = os.path.expanduser(name)
     if os.path.isabs(name) or "/" in name or "\\" in name:
         return name
     return shutil.which(name) or name

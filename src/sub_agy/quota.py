@@ -260,9 +260,12 @@ class AccountQuotaInfo:
 
 
 def extract_gemini_headroom(quota_data: dict) -> tuple[float | None, float | None]:
-    """Extract (five_hour_pct, weekly_pct) for Gemini models from normalized quota data."""
+    """Extract (five_hour_pct, weekly_pct) for Gemini models from normalized quota data.
+
+    Returns (five_hour_pct, weekly_pct) only if a Gemini model group is present with both
+    5h and weekly buckets. If no Gemini group exists or either bucket is missing, returns (None, None).
+    """
     groups = quota_data.get("groups", [])
-    # First search for group with 'gemini' in name
     for group in groups:
         name = group.get("name", "").lower()
         if "gemini" in name:
@@ -278,21 +281,6 @@ def extract_gemini_headroom(quota_data: dict) -> tuple[float | None, float | Non
                         weekly = float(pct)
             if five_h is not None and weekly is not None:
                 return five_h, weekly
-
-    # Fallback to any group that has both 5h and weekly buckets
-    for group in groups:
-        five_h = None
-        weekly = None
-        for bucket in group.get("buckets", []):
-            window = bucket.get("window")
-            pct = bucket.get("remaining_pct")
-            if pct is not None:
-                if window == "5h" and five_h is None:
-                    five_h = float(pct)
-                elif window == "weekly" and weekly is None:
-                    weekly = float(pct)
-        if five_h is not None and weekly is not None:
-            return five_h, weekly
 
     return None, None
 

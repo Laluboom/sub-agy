@@ -588,3 +588,79 @@ def test_legacy_job_uses_default_account(tmp_path: Path, git_repo: Path) -> None
     status_res = _run_cli(git_repo, "status", "j-legacy")
     assert status_res.returncode == 0
     assert json.loads(status_res.stdout)["account"] == "default"
+
+
+def test_expand_user_in_agy_bin_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agy_bin with '~' expands user directory consistently."""
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    from sub_agy.config import agy_bin_path
+
+    acc = AccountConfig(name="u", agy_bin="~/.local/bin/my-agy")
+    resolved = acc.resolved_agy_bin()
+    assert resolved == str(fake_home / ".local" / "bin" / "my-agy")
+
+    # agy_bin_path with AccountConfig
+    assert agy_bin_path(acc) == str(fake_home / ".local" / "bin" / "my-agy")
+
+    # agy_bin_path with bare string
+    assert agy_bin_path("~/.local/bin/my-agy") == str(fake_home / ".local" / "bin" / "my-agy")
+
+    # agy_bin_path with Config
+    cfg = Config(agy_bin="~/bin/custom-agy")
+    assert agy_bin_path(cfg) == str(fake_home / "bin" / "custom-agy")
+
+
+def test_extract_gemini_headroom_rejects_non_gemini_groups() -> None:
+    """Groups with 5h+weekly buckets but no Gemini in name return (None, None)."""
+    claude_only_data = {
+        "groups": [
+            {
+                "name": "Claude and GPT models",
+                "buckets": [
+                    {"window": "5h", "remaining_pct": 100.0},
+                    {"window": "weekly", "remaining_pct": 100.0},
+                ],
+            },
+            {
+                "name": "Custom Model Group",
+                "buckets": [
+                    {"window": "5h", "remaining_pct": 90.0},
+                    {"window": "weekly", "remaining_pct": 80.0},
+                ],
+            },
+        ]
+    }
+    five_h, weekly = extract_gemini_headroom(claude_only_data)
+    assert five_h is None
+    assert weekly is None
+
+
+def test_threshold_checked_separately_both_windows_and_accounts(tmp_path: Path) -> None:
+    """Each account's 5h and weekly windows are checked separately against threshold."""
+    bin1 = tmp_path / "bin" / "agy-w1.py"
+    bin2 = tmp_path / "bin" / "agy-w2.py"
+    bin3 = tmp_path / "bin" / "agy-w3.py"
+
+    # acc1: 5h=15% (<20%), weekly=90% -> rejected because 5h is low
+    _make_fake_account_agy(bin1, five_h_pct=15.0, weekly_pct=90.0)
+    # acc2: 5h=90%, weekly=15% (<20%) -> rejected because weekly is low
+    _make_fake_account_agy(bin2, five_h_pct=90.0, weekly_pct=15.0)
+    # acc3: 5h=18%, weekly=18%, but custom low_quota_threshold=10.0 -> accepted
+    _make_fake_account_agy(bin3, five_h_pct=18.0, weekly_pct=18.0)
+
+    config = Config(
+        accounts=(
+            AccountConfig(name="acc1", agy_bin=str(bin1)),
+            AccountConfig(name="acc2", agy_bin=str(bin2)),
+            AccountConfig(name="acc3", agy_bin=str(bin3), low_quota_threshold=10.0),
+        ),
+        low_quota_threshold=20.0,
+    )
+
+    chosen, meta = select_account(config)
+    assert chosen.name == "acc3"
+    assert meta["account"] == "acc3"
