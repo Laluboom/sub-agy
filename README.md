@@ -105,10 +105,42 @@ default_timeout = "30m"             # per-job timeout, Go duration (Ns/Nm/Nh)
 max_concurrent = 3                  # jobs running at once per project; extras queue FIFO
 max_retries = 1                     # extra attempts after a timeout
 queue_timeout = "2h"                # max wait for a run slot before the job errors
-agy_bin = "agy"                     # agy binary name or absolute path
+agy_bin = "agy"                     # default agy binary name or path (used when accounts is not set)
+low_quota_threshold = 20.0          # low-quota avoidance threshold (default 20%)
 ```
 
-A missing file simply means the defaults above. Per-job CLI flags (`--model` / `--effort` / `--timeout`) override the config.
+### Multi-account configuration (opt-in)
+
+If you have multiple independently authenticated `agy` launchers (e.g. personal, work, secondary accounts), configure them under `[[accounts]]` (or `[accounts.<name>]` tables):
+
+```toml
+# Example multi-account setup with 3 independent profiles:
+[[accounts]]
+name = "default"
+agy_bin = "~/.local/bin/agy"
+brain_dir = "~/.gemini/antigravity-cli/brain"  # optional; defaults to standard brain path
+
+[[accounts]]
+name = "rainy"
+agy_bin = "~/.local/bin/agy-rainy"
+brain_dir = "~/.gemini-rainy/antigravity-cli/brain"
+
+[[accounts]]
+name = "rainy-2"
+agy_bin = "~/.local/bin/agy-rainy-2"
+brain_dir = "~/.gemini-rainy-2/antigravity-cli/brain"
+low_quota_threshold = 25.0                    # optional per-account override
+```
+
+Key behaviors:
+- **0-token automatic selection**: For each new `run`, `sub-agy` queries the configured accounts' Gemini quotas (0 model tokens), checks for usable five-hour AND weekly headroom above the low-quota threshold (default 20%), and selects the account with the best headroom.
+- **Fail-safe determinism**: If quota queries fail or every account is below the threshold, `sub-agy run` fails with a clear deterministic error rather than silently using an exhausted profile.
+- **Explicit account override**: Use `sub-agy run --account <name>` to manually pick an account (returns a clear error if the name is unknown).
+- **Per-job selection & feedback stickiness**: Account choice happens **once per new job**, before the detached supervisor starts. Selection **never switches mid-conversation**: all subsequent `feedback` rounds stick to the job's original account to preserve conversation state and context. Old jobs without account metadata continue using the legacy default account.
+- **Transcript recovery**: Transcript recovery reads the job's chosen account brain directory, avoiding cross-account transcript confusion.
+- **Backwards compatibility**: If no `accounts` are configured, single-account installs and `agy_bin` continue working exactly as before.
+
+A missing file simply means the defaults above. Per-job CLI flags (`--model` / `--effort` / `--timeout` / `--account`) override the config.
 
 ## Quick start
 
@@ -169,7 +201,7 @@ Gemini 模型：5h 限额剩余 99.8%（32分钟后重置），7d 限额剩余 9
 
 | Command | Description |
 |---|---|
-| `sub-agy run --plan <plan.md>` | Dispatch a plan, returns `job_id` immediately |
+| `sub-agy run --plan <plan.md> [--account <name>]` | Dispatch a plan, returns `job_id` immediately |
 | `sub-agy status [--all]` | Show job status, queue position, tokens, elapsed |
 | `sub-agy result <job-id>` | Harvest the structured result of a finished job |
 | `sub-agy feedback <job-id> "..."` | Send feedback, start the next repair round |
@@ -178,7 +210,7 @@ Gemini 模型：5h 限额剩余 99.8%（32分钟后重置），7d 限额剩余 9
 | `sub-agy list` | List jobs in the current project |
 | `sub-agy pending [--under <dir>]` | List finished-but-unharvested jobs (data source for the Stop-hook safety net) |
 | `sub-agy cleanup <job-id>` | Remove the job worktree and branch |
-| `sub-agy quota [--oneline] [--pretty]` | Query Antigravity quota (0 tokens) |
+| `sub-agy quota [--account <name>] [--oneline] [--pretty]` | Query Antigravity quota (0 tokens) |
 | `sub-agy doctor` | Environment diagnostics |
 
 ## Security & compliance

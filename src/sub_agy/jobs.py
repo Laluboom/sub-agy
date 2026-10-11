@@ -56,6 +56,9 @@ def new_meta(
     model: str,
     effort: str,
     timeout: str,
+    account: str | None = None,
+    agy_bin: str | None = None,
+    brain_dir: str | None = None,
 ) -> dict:
     created_at = datetime.now(timezone.utc).isoformat()
     return {
@@ -83,6 +86,9 @@ def new_meta(
         "attempts": 0,
         "recovered_from_transcript": False,
         "harvested_at": None,  # §18.2
+        "account": account or "default",
+        "agy_bin": agy_bin,
+        "brain_dir": brain_dir,
     }
 
 

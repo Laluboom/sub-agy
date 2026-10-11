@@ -14,6 +14,25 @@ from .schema import EXIT_CODES
 
 
 @dataclass(frozen=True)
+class AccountConfig:
+    name: str
+    agy_bin: str = "agy"
+    brain_dir: str = ""
+    low_quota_threshold: float | None = None
+
+    def resolved_brain_dir(self) -> Path:
+        if self.brain_dir:
+            return Path(self.brain_dir).expanduser().resolve()
+        return Path.home() / ".gemini" / "antigravity-cli" / "brain"
+
+    def resolved_agy_bin(self) -> str:
+        name = os.path.expanduser(self.agy_bin)
+        if os.path.isabs(name) or "/" in name or "\\" in name:
+            return name
+        return shutil.which(name) or name
+
+
+@dataclass(frozen=True)
 class Config:
     default_model: str = "gemini-3.7-flash"
     default_effort: str = "medium"
@@ -22,9 +41,27 @@ class Config:
     max_retries: int = 1
     queue_timeout: str = "2h"
     agy_bin: str = "agy"
+    accounts: tuple[AccountConfig, ...] = ()
+    low_quota_threshold: float = 20.0
 
     def timeout_seconds(self) -> int:
         return parse_timeout(self.default_timeout)
+
+    def get_account(self, name: str) -> AccountConfig | None:
+        for acc in self.accounts:
+            if acc.name == name:
+                return acc
+        return None
+
+    def default_account(self) -> AccountConfig:
+        if self.accounts:
+            return self.accounts[0]
+        return AccountConfig(
+            name="default",
+            agy_bin=self.agy_bin,
+            brain_dir=str(Path.home() / ".gemini" / "antigravity-cli" / "brain"),
+            low_quota_threshold=self.low_quota_threshold,
+        )
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "sub-agy" / "config.toml"
@@ -78,11 +115,67 @@ def load_config(path: Path | None = None) -> Config:
         kwargs["queue_timeout"] = str(data["queue_timeout"])
     if "agy_bin" in data:
         kwargs["agy_bin"] = str(data["agy_bin"])
+    if "low_quota_threshold" in data:
+        val = data["low_quota_threshold"]
+        if isinstance(val, str) and val.strip().endswith("%"):
+            kwargs["low_quota_threshold"] = float(val.strip()[:-1])
+        else:
+            kwargs["low_quota_threshold"] = float(val)
+
+    accounts_list: list[AccountConfig] = []
+    if "accounts" in data:
+        raw_accounts = data["accounts"]
+        if isinstance(raw_accounts, list):
+            for item in raw_accounts:
+                if isinstance(item, dict):
+                    name = str(item.get("name", "")).strip()
+                    acc_agy_bin = str(item.get("agy_bin", "agy")).strip()
+                    brain_dir = str(item.get("brain_dir", "")).strip()
+                    thresh = item.get("low_quota_threshold")
+                    thresh_val = None
+                    if thresh is not None:
+                        if isinstance(thresh, str) and thresh.strip().endswith("%"):
+                            thresh_val = float(thresh.strip()[:-1])
+                        else:
+                            thresh_val = float(thresh)
+                    if name:
+                        accounts_list.append(
+                            AccountConfig(
+                                name=name,
+                                agy_bin=acc_agy_bin,
+                                brain_dir=brain_dir,
+                                low_quota_threshold=thresh_val,
+                            )
+                        )
+        elif isinstance(raw_accounts, dict):
+            for name_key, item in raw_accounts.items():
+                if isinstance(item, dict):
+                    name = str(item.get("name") or name_key).strip()
+                    acc_agy_bin = str(item.get("agy_bin", "agy")).strip()
+                    brain_dir = str(item.get("brain_dir", "")).strip()
+                    thresh = item.get("low_quota_threshold")
+                    thresh_val = None
+                    if thresh is not None:
+                        if isinstance(thresh, str) and thresh.strip().endswith("%"):
+                            thresh_val = float(thresh.strip()[:-1])
+                        else:
+                            thresh_val = float(thresh)
+                    if name:
+                        accounts_list.append(
+                            AccountConfig(
+                                name=name,
+                                agy_bin=acc_agy_bin,
+                                brain_dir=brain_dir,
+                                low_quota_threshold=thresh_val,
+                            )
+                        )
+    if accounts_list:
+        kwargs["accounts"] = tuple(accounts_list)
 
     return Config(**kwargs)
 
 
-def agy_bin_path(config: Config) -> str:
+def agy_bin_path(config: Config | AccountConfig | str) -> str:
     """Resolve the configured agy binary; a bare name is looked up on PATH.
 
     The lookup goes through ``shutil.which`` because it honours PATHEXT: the
@@ -92,13 +185,19 @@ def agy_bin_path(config: Config) -> str:
     appends only ``.exe``.  A name that resolves to nothing comes back unchanged,
     leaving callers to report it as missing.
     """
-    name = config.agy_bin
+    if isinstance(config, str):
+        name = config
+    elif isinstance(config, AccountConfig):
+        name = config.agy_bin
+    else:
+        name = config.agy_bin
+    name = os.path.expanduser(name)
     if os.path.isabs(name) or "/" in name or "\\" in name:
         return name
     return shutil.which(name) or name
 
 
-def agy_command(config: Config) -> list[str]:
+def agy_command(config: Config | AccountConfig | str) -> list[str]:
     """Argv prefix that launches agy on any platform.
 
     A ``.py`` path cannot be exec'd directly on Windows, as CreateProcess has no

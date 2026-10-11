@@ -32,7 +32,7 @@ from .jobs import (
 from .plan import Plan, assemble_prompt, parse_plan, write_plan_files
 from .procs import configure_stdio, pid_alive, spawn_detached, terminate_tree
 from .queue import queue_forecast, queue_lock, queue_position
-from .quota import fetch_quota, format_oneline
+from .quota import fetch_quota, format_oneline, select_account
 from .schema import EXIT_CODES, RESULT_SCHEMA, extract_tokens, fmt_elapsed, fmt_tokens
 from .supervise import supervise_round
 from .watch import watch_jobs
@@ -99,6 +99,13 @@ def cmd_run(args) -> None:
         _json_error("--plan or --text required", EXIT_CODES["usage"])
 
     plan = parse_plan(plan_text)
+
+    try:
+        chosen_account, _ = select_account(config, requested_name=getattr(args, "account", None))
+    except ValueError as exc:
+        _json_error(str(exc), EXIT_CODES["usage"])
+    except RuntimeError as exc:
+        _json_error(str(exc), EXIT_CODES["generic_error"])
 
     use_worktree = not args.no_worktree
     worktree: Path | None = None
@@ -170,6 +177,9 @@ def cmd_run(args) -> None:
         config.default_model,
         config.default_effort,
         config.default_timeout,
+        account=chosen_account.name,
+        agy_bin=chosen_account.agy_bin,
+        brain_dir=str(chosen_account.resolved_brain_dir()),
     )
     write_meta(project, job_id, meta)
 
@@ -200,6 +210,7 @@ def cmd_run(args) -> None:
 
     output = {
         "job_id": job_id,
+        "account": meta.get("account") or "default",
         "state": meta.get("state"),
         "queue_position": forecast,
         "worktree": str(worktree) if worktree else None,
@@ -249,6 +260,7 @@ def cmd_status(args) -> None:
 
             data.append({
                 "id": m["id"],
+                "account": m.get("account") or "default",
                 "state": m["state"],
                 "round": m.get("round"),
                 "queue_position": pos,
@@ -259,7 +271,7 @@ def cmd_status(args) -> None:
 
         if args.pretty:
             print(
-                f"{'id':<30} {'state':<12} {'round':>5} "
+                f"{'id':<30} {'account':<12} {'state':<12} {'round':>5} "
                 f"{'queue':>6} {'elapsed':>10} {'tokens':>10} {'summary'}"
             )
             for item in data:
@@ -271,7 +283,7 @@ def cmd_status(args) -> None:
                 queue_str = f"#{position}" if position else "-"
                 summary = (item.get("summary") or "")[:60]
                 print(
-                    f"{item['id']:<30} {item['state']:<12} {item.get('round', 1):>5} "
+                    f"{item['id']:<30} {item.get('account', 'default'):<12} {item['state']:<12} {item.get('round', 1):>5} "
                     f"{queue_str:>6} {elapsed_str:>10} {tokens_str:>10} {summary}"
                 )
         else:
@@ -288,6 +300,7 @@ def cmd_status(args) -> None:
         write_meta(project, args.id, meta)
     data = {
         "id": meta["id"],
+        "account": meta.get("account") or "default",
         "state": meta["state"],
         "round": meta.get("round"),
         "queue_position": queue_position(project, args.id),
@@ -317,6 +330,9 @@ def cmd_result(args) -> None:
         result = json.loads(rpath.read_text(encoding="utf-8"))
     else:
         result = {"error": "no result.json available", "state": meta["state"]}
+
+    if "account" not in result:
+        result["account"] = meta.get("account") or "default"
 
     # §18.2: Mark as harvested (write timestamp) if state is done/error and harvested_at not yet set
     if meta.get("state") in ("done", "error") and meta.get("harvested_at") is None:
@@ -640,38 +656,114 @@ def cmd_doctor(args) -> None:
         sys.exit(EXIT_CODES["generic_error"])
 
 
+def _print_quota_groups_pretty(groups: list[dict]) -> None:
+    for group in groups:
+        print(f"[{group['name']}]")
+        header = f"{'window':<10} {'remaining%':>10} {'reset_time':<25} {'reset_in':<20}"
+        print(header.rstrip())
+        for bucket in group.get("buckets", []):
+            reset_time = bucket.get("reset_time") or "-"
+            reset_in = bucket.get("reset_in") or "-"
+            line = (
+                f"{bucket['window']:<10} {bucket['remaining_pct']:>10.1f} "
+                f"{reset_time:<25} {reset_in:<20}"
+            )
+            print(line.rstrip())
+        print()
+
+
 def cmd_quota(args) -> None:
     config = load_config()
-    try:
-        data = fetch_quota(config)
-    except FileNotFoundError as exc:
-        print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
-        sys.exit(EXIT_CODES["not_installed"])
-    except (RuntimeError, ValueError) as exc:
-        print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
-        sys.exit(EXIT_CODES["generic_error"])
+
+    if getattr(args, "account", None):
+        target_account = config.get_account(args.account)
+        if target_account is None:
+            if not config.accounts and args.account == "default":
+                target_account = config.default_account()
+            else:
+                _json_error(f"unknown account '{args.account}'", EXIT_CODES["usage"])
+        try:
+            data = fetch_quota(target_account)
+        except FileNotFoundError as exc:
+            print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
+            sys.exit(EXIT_CODES["not_installed"])
+        except (RuntimeError, ValueError) as exc:
+            print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
+            sys.exit(EXIT_CODES["generic_error"])
+
+        if getattr(args, "oneline", False):
+            print(format_oneline(data))
+            return
+
+        if args.pretty:
+            _print_quota_groups_pretty(data.get("groups", []))
+            print("5h 窗口用于平滑全球容量；weekly 与你的订阅档位挂钩")
+        else:
+            print(_fmt_json(data, False))
+        return
+
+    if not config.accounts:
+        try:
+            data = fetch_quota(config)
+        except FileNotFoundError as exc:
+            print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
+            sys.exit(EXIT_CODES["not_installed"])
+        except (RuntimeError, ValueError) as exc:
+            print(_fmt_json({"ok": False, "error": str(exc)}, False), file=sys.stdout)
+            sys.exit(EXIT_CODES["generic_error"])
+
+        if getattr(args, "oneline", False):
+            print(format_oneline(data))
+            return
+
+        if args.pretty:
+            _print_quota_groups_pretty(data.get("groups", []))
+            print("5h 窗口用于平滑全球容量；weekly 与你的订阅档位挂钩")
+        else:
+            print(_fmt_json(data, False))
+        return
+
+    # Multi-account mode: query all configured accounts
+    accounts_data: dict[str, dict] = {}
+    any_ok = False
+    for acc in config.accounts:
+        try:
+            data = fetch_quota(acc)
+            accounts_data[acc.name] = data
+            any_ok = True
+        except Exception as exc:
+            accounts_data[acc.name] = {"ok": False, "error": str(exc)}
 
     if getattr(args, "oneline", False):
-        print(format_oneline(data))
+        lines = []
+        for acc_name, data in accounts_data.items():
+            if data.get("ok"):
+                lines.append(f"[{acc_name}] {format_oneline(data)}")
+            else:
+                lines.append(f"[{acc_name}] 查询失败：{data.get('error')}")
+        print("\n".join(lines))
+        if not any_ok:
+            sys.exit(EXIT_CODES["generic_error"])
         return
 
     if args.pretty:
-        for group in data.get("groups", []):
-            print(f"[{group['name']}]")
-            header = f"{'window':<10} {'remaining%':>10} {'reset_time':<25} {'reset_in':<20}"
-            print(header.rstrip())
-            for bucket in group.get("buckets", []):
-                reset_time = bucket.get("reset_time") or "-"
-                reset_in = bucket.get("reset_in") or "-"
-                line = (
-                    f"{bucket['window']:<10} {bucket['remaining_pct']:>10.1f} "
-                    f"{reset_time:<25} {reset_in:<20}"
-                )
-                print(line.rstrip())
-            print()
+        for acc_name, data in accounts_data.items():
+            acc_obj = config.get_account(acc_name)
+            acc_bin = acc_obj.agy_bin if acc_obj else ""
+            print(f"=== Account: {acc_name} ({acc_bin}) ===")
+            if data.get("ok"):
+                _print_quota_groups_pretty(data.get("groups", []))
+            else:
+                print(f"Error: {data.get('error')}\n")
         print("5h 窗口用于平滑全球容量；weekly 与你的订阅档位挂钩")
-    else:
-        print(_fmt_json(data, False))
+        if not any_ok:
+            sys.exit(EXIT_CODES["generic_error"])
+        return
+
+    output = {"ok": any_ok, "accounts": accounts_data}
+    print(_fmt_json(output, False))
+    if not any_ok:
+        sys.exit(EXIT_CODES["generic_error"])
 
 
 def cmd_supervise(args) -> None:
@@ -862,6 +954,7 @@ def build_parser() -> None:
     run_p.add_argument(
         "--wait", action="store_true", help="wait for the job to finish before exiting"
     )
+    run_p.add_argument("--account", help="account name to use")
     run_p.set_defaults(func=cmd_run)
 
     status_p = sub.add_parser("status", help="show job status")
@@ -928,6 +1021,7 @@ def build_parser() -> None:
 
     quota_p = sub.add_parser("quota", help="query Antigravity usage quotas")
     quota_p.add_argument("--oneline", action="store_true", help="compact one-line summary")
+    quota_p.add_argument("--account", help="query quota for a specific account")
     quota_p.set_defaults(func=cmd_quota)
 
     sup_p = sub.add_parser("_supervise", help=argparse.SUPPRESS)

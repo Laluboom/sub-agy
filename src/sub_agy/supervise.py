@@ -28,7 +28,9 @@ from .queue import QueueTimeout, acquire_slot
 from .worktree import diff_stat
 
 
-def _brain_dir() -> Path:
+def _brain_dir(meta: dict | None = None) -> Path:
+    if meta and meta.get("brain_dir"):
+        return Path(meta["brain_dir"]).expanduser().resolve()
     return Path.home() / ".gemini" / "antigravity-cli" / "brain"
 
 
@@ -51,7 +53,7 @@ def _find_transcript_response(
     Only recover if exactly one brain directory's mtime falls in [started_at, now) and
     its UUID is not used by any other job in this project.
     """
-    brain_dir = _brain_dir()
+    brain_dir = _brain_dir(meta)
     if not brain_dir.exists():
         return None
 
@@ -274,12 +276,14 @@ def supervise_round(job_id: str, round_number: int, project: Path | None = None)
     if not schema_path.exists():
         schema_path = None
     config = load_config()
+    agy_bin = meta.get("agy_bin") or config.agy_bin
     # §18.1.q: Use dataclasses.replace for Config overrides
     config = dataclasses.replace(
         config,
         default_model=meta["model"],
         default_effort=meta["effort"],
         default_timeout=meta["timeout"],
+        agy_bin=agy_bin,
     )
 
     cancelled = False
@@ -493,6 +497,7 @@ def supervise_round(job_id: str, round_number: int, project: Path | None = None)
 
     result = {
         "job_id": job_id,
+        "account": meta.get("account") or "default",
         "state": meta["state"],
         "agy_status": agy_status or "UNKNOWN",
         "round": round_number,

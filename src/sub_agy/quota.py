@@ -6,8 +6,9 @@ import json
 import re
 import subprocess
 from collections import OrderedDict
+from dataclasses import dataclass
 
-from .config import Config, agy_command
+from .config import AccountConfig, Config, agy_command
 
 _REFRESH_RE = re.compile(r"refresh in (.+?)\.?$", re.IGNORECASE)
 
@@ -204,7 +205,7 @@ def _parse_envelope(stdout: str) -> dict:
     raise ValueError("agy usage response missing structured data and text response")
 
 
-def fetch_quota(config: Config, timeout: float = 75.0) -> dict:
+def fetch_quota(config: Config | AccountConfig | str, timeout: float = 75.0) -> dict:
     """Run agy usage query and return normalized quota data.
 
     Raises:
@@ -240,3 +241,153 @@ def fetch_quota(config: Config, timeout: float = 75.0) -> dict:
         raise RuntimeError(err)
 
     return _parse_envelope(result.stdout)
+
+
+@dataclass(frozen=True)
+class AccountQuotaInfo:
+    account: AccountConfig
+    ok: bool
+    five_hour_pct: float | None = None
+    weekly_pct: float | None = None
+    error: str | None = None
+    raw_data: dict | None = None
+
+    @property
+    def bottleneck_pct(self) -> float | None:
+        if self.five_hour_pct is not None and self.weekly_pct is not None:
+            return min(self.five_hour_pct, self.weekly_pct)
+        return None
+
+
+def extract_gemini_headroom(quota_data: dict) -> tuple[float | None, float | None]:
+    """Extract (five_hour_pct, weekly_pct) for Gemini models from normalized quota data.
+
+    Returns (five_hour_pct, weekly_pct) only if a Gemini model group is present with both
+    5h and weekly buckets. If no Gemini group exists or either bucket is missing, returns (None, None).
+    """
+    groups = quota_data.get("groups", [])
+    for group in groups:
+        name = group.get("name", "").lower()
+        if "gemini" in name:
+            five_h = None
+            weekly = None
+            for bucket in group.get("buckets", []):
+                window = bucket.get("window")
+                pct = bucket.get("remaining_pct")
+                if pct is not None:
+                    if window == "5h" and five_h is None:
+                        five_h = float(pct)
+                    elif window == "weekly" and weekly is None:
+                        weekly = float(pct)
+            if five_h is not None and weekly is not None:
+                return five_h, weekly
+
+    return None, None
+
+
+def query_account_quota(account: AccountConfig, timeout: float = 75.0) -> AccountQuotaInfo:
+    """Fetch quota for a specific account and parse Gemini headroom."""
+    try:
+        data = fetch_quota(account, timeout=timeout)
+        five_h, weekly = extract_gemini_headroom(data)
+        if five_h is None or weekly is None:
+            return AccountQuotaInfo(
+                account=account,
+                ok=False,
+                error="missing 5h or weekly Gemini quota in agy response",
+                raw_data=data,
+            )
+        return AccountQuotaInfo(
+            account=account,
+            ok=True,
+            five_hour_pct=five_h,
+            weekly_pct=weekly,
+            raw_data=data,
+        )
+    except Exception as exc:
+        return AccountQuotaInfo(
+            account=account,
+            ok=False,
+            error=str(exc),
+        )
+
+
+def select_account(
+    config: Config,
+    requested_name: str | None = None,
+    timeout: float = 75.0,
+) -> tuple[AccountConfig, dict]:
+    """Select the best account based on configuration and Gemini quota headroom.
+
+    Returns:
+        (selected_account, metadata_dict)
+    Raises:
+        ValueError: if requested_name is unknown
+        RuntimeError: if every configured account has low quota or quota query fails
+    """
+    if not config.accounts:
+        if requested_name:
+            if requested_name == "default":
+                return config.default_account(), {"reason": "default"}
+            raise ValueError(f"unknown account '{requested_name}': no accounts configured")
+        return config.default_account(), {"reason": "default"}
+
+    if requested_name:
+        acc = config.get_account(requested_name)
+        if acc is None:
+            valid = ", ".join(f"'{a.name}'" for a in config.accounts)
+            raise ValueError(f"unknown account '{requested_name}'. Configured accounts: {valid}")
+        return acc, {"reason": "explicit", "account": acc.name}
+
+    # Auto-selection across configured accounts
+    infos: list[AccountQuotaInfo] = []
+    for acc in config.accounts:
+        infos.append(query_account_quota(acc, timeout=timeout))
+
+    # Evaluate headroom against threshold
+    eligible: list[tuple[AccountQuotaInfo, float]] = []
+    reasons: list[str] = []
+
+    for info in infos:
+        thresh = (
+            info.account.low_quota_threshold
+            if info.account.low_quota_threshold is not None
+            else config.low_quota_threshold
+        )
+        if not info.ok:
+            reasons.append(f"account '{info.account.name}': quota query failed ({info.error})")
+            continue
+
+        if info.five_hour_pct >= thresh and info.weekly_pct >= thresh:
+            eligible.append((info, thresh))
+        else:
+            low_parts = []
+            if info.five_hour_pct < thresh:
+                low_parts.append(f"5h remaining {info.five_hour_pct:.1f}% < {thresh:.1f}%")
+            if info.weekly_pct < thresh:
+                low_parts.append(f"weekly remaining {info.weekly_pct:.1f}% < {thresh:.1f}%")
+            reasons.append(f"account '{info.account.name}': below threshold ({', '.join(low_parts)})")
+
+    if eligible:
+        # Choose the account with the best bottleneck headroom; ties broken by total headroom, then config order
+        best_info, thresh = max(
+            eligible,
+            key=lambda item: (
+                item[0].bottleneck_pct if item[0].bottleneck_pct is not None else 0.0,
+                (item[0].five_hour_pct or 0.0) + (item[0].weekly_pct or 0.0),
+            ),
+        )
+        return best_info.account, {
+            "reason": "quota_selected",
+            "account": best_info.account.name,
+            "five_hour_pct": best_info.five_hour_pct,
+            "weekly_pct": best_info.weekly_pct,
+        }
+
+    # No eligible accounts
+    error_msg = (
+        "no configured account has sufficient Gemini quota:\n  • "
+        + "\n  • ".join(reasons)
+        + "\nUse `run --account NAME` to select an account deliberately."
+    )
+    raise RuntimeError(error_msg)
